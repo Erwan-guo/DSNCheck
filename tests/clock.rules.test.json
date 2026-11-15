@@ -1,0 +1,5 @@
+{
+  "clock_series": [
+    { "name": "clock series", "part_pattern": "^U[1-8] ", "pin_pattern": "^CLK$", "max_ohms": 33 }
+  ]
+}

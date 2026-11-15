@@ -1,0 +1,34 @@
+{
+  "net_naming": {
+    "name": "项目网络命名",
+    "required_pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+    "exclude_pattern": "^(?:N[0-9]+|NULL)$",
+    "auto_net_max_pins": 8
+  },
+  "slow_slew": [
+    {
+      "name": "低压摆率输出",
+      "part_pattern": "^U100 ",
+      "pin_pattern": "^OUT$",
+      "rise_ns": 35,
+      "max_rise_ns": 20
+    }
+  ],
+  "bias_rules": [
+    { "name": "总线驱动器OE初始无效", "category": "OE上拉检查", "part_pattern": "^U100 ", "pin_pattern": "(?i)OE", "driver_part_pattern": "^(?i:(?:U|IC|MN)\\d+[A-Z]?)$", "max_series_ohms": 100, "min_ohms": 1000, "max_ohms": 100000 },
+    { "name": "开集/开漏输出上拉", "category": "OC/OD门上拉检查", "part_pattern": "^U100 ", "direction": "up" },
+    { "name": "指定网络下拉", "category": "网络上拉或下拉检查", "net_pattern": "^MODE_SEL$", "direction": "down" }
+  ],
+  "bus_hold": [
+    { "name": "无内部保持输入", "part_pattern": "^U300 ", "pin_pattern": "^IN[0-9]+$", "mode": "external_required" }
+  ],
+  "differential_pairs": [
+    { "name": "USB 差分对", "part_pattern": "^U400 ", "positive_pin": "^USB_P$", "negative_pin": "^USB_N$", "positive_net": "_P$", "negative_net": "_N$" }
+  ],
+  "clock_series": [
+    { "name": "CPU 时钟串阻", "part_pattern": "^U500 ", "pin_pattern": "^CLK$", "max_ohms": 33 }
+  ],
+  "latch_rc_filter": [
+    { "name": "其他锁存器输入RC", "part_pattern": "^U200 ", "pin_pattern": "^LE$", "series_ohms": 33, "shunt_pf": 33 }
+  ]
+}

@@ -1,0 +1,10 @@
+{"record":"wire","id":"W1","page_id":"P1","net_name":"NET_BAD","start_x":"20","start_y":"10","end_x":"50","end_y":"10"}
+{"record":"offpage_connector","id":"O1","page_id":"P1","name":"SIGNAL_A","net_name":"","left":"0","top":"0","right":"20","bottom":"20"}
+{"record":"global","id":"G1","page_id":"P1","name":"3V3","net_name":"","left":"20","top":"0","right":"40","bottom":"20"}
+{"record":"wire","id":"W2","page_id":"P1","net_name":"SIG_LOCAL","start_x":"100","start_y":"50","end_x":"150","end_y":"50"}
+{"record":"net_alias","id":"A1","page_id":"P1","owner_id":"W2","name":"SIG"}
+{"record":"offpage_connector","id":"O2","page_id":"P2","name":"SIG","net_name":"SIG","left":"0","top":"0","right":"20","bottom":"20"}
+{"record":"wire","id":"W3","page_id":"P1","net_name":"BUS2","start_x":"100","start_y":"80","end_x":"150","end_y":"80"}
+{"record":"net_alias","id":"A2","page_id":"P1","owner_id":"W3","name":"BUS2"}
+{"record":"offpage_connector","id":"O3","page_id":"P1","name":"BUS[0..3]","net_name":"BUS[0..3]","left":"0","top":"0","right":"20","bottom":"20"}
+{"record":"offpage_connector","id":"O4","page_id":"P2","name":"BUS2","net_name":"BUS2","left":"0","top":"0","right":"20","bottom":"20"}

@@ -9,10 +9,15 @@ if {[catch {set capcheckOutput [::capcheck::mainActive]} capcheckMessage]} {
     puts "CapCheck export failed: $capcheckMessage"
 } else {
     puts "CapCheck export completed: $capcheckOutput"
-    set capcheckChecker [file normalize [file join $capcheckScriptDir .. .. check Run-DSNCheck.ps1]]
-    if {[catch {set capcheckReport [exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File $capcheckChecker -InputDirectory $capcheckOutput]} capcheckCheckMessage]} {
-        puts "DSN category check failed: $capcheckCheckMessage"
+    set capcheckMap [file join $capcheckOutput power_nets.confirmed.json]
+    if {![file exists $capcheckMap]} {
+        puts "Power/ground networks need review before checking. Run Invoke-PowerNetReview.ps1 -Mode Draft, review the CSV, then -Mode Confirm."
     } else {
-        puts $capcheckReport
+        set capcheckChecker [file normalize [file join $capcheckScriptDir .. .. check generic Run-DSNCheck.ps1]]
+        if {[catch {set capcheckReport [exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File $capcheckChecker -InputDirectory $capcheckOutput]} capcheckCheckMessage]} {
+            puts "DSN category check failed: $capcheckCheckMessage"
+        } else {
+            puts $capcheckReport
+        }
     }
 }

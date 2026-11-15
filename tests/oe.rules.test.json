@@ -1,0 +1,15 @@
+{
+  "bias_rules": [
+    {
+      "name": "bus OE startup inactive",
+      "category": "OE上拉检查",
+      "part_pattern": "^U(?:[1-8]|10|11|12) ",
+      "pin_pattern": "(?i)OE",
+      "driver_part_pattern": "^U9$",
+      "rail_pattern": "^3V3$",
+      "max_series_ohms": 100,
+      "min_ohms": 1000,
+      "max_ohms": 100000
+    }
+  ]
+}

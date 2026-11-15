@@ -197,14 +197,14 @@ doc.add_paragraph('统一模型建议包含 design、sheet、component、pin、n
 
 doc.add_heading('8. 工具目录与使用流程', level=1)
 add_table(doc, ['文件','用途'], [
-    ('scripts/capture_export_active.tcl','从当前 Capture 活动设计导出数据'),
-    ('scripts/capture_export_all.tcl','导出器核心库，含 ISCF/Dbo/自定义补充逻辑'),
-    ('Export-DSNCheckPackage.ps1','将原始导出整理为离线数据包'),
-    ('Run-DSNCheck.ps1','只读取离线数据包并生成检查报告'),
-    ('Invoke-DSNCheck.ps1','网络规则检查核心实现'),
+    ('export/cadence/capture_export_active.tcl','从当前 Capture 活动设计导出数据'),
+    ('export/cadence/capture_export_all.tcl','导出器核心库，含 ISCF/Dbo/自定义补充逻辑'),
+    ('normalize/Export-DSNCheckPackage.ps1','将原始导出整理为离线数据包'),
+    ('check/generic/Run-DSNCheck.ps1','只读取离线数据包并生成通用检查报告'),
+    ('check/generic/Invoke-DSNCheck.ps1','通用网络规则检查核心实现'),
 ], [3000,6360])
 doc.add_heading('8.1 标准两阶段流程', level=2)
-add_code(doc, '1) Capture Tcl Window:\n   source {D:/GPTPRJ/DSNCheck/scripts/capture_export_active.tcl}\n\n2) PowerShell:\n   & D:\GPTPRJ\DSNCheck\Export-DSNCheckPackage.ps1 `\n     -InputDirectory D:\GPTPRJ\EXAMPLE_SCH\<DSN>_checkdata\n\n3) PowerShell:\n   & D:\GPTPRJ\DSNCheck\Run-DSNCheck.ps1 `\n     -InputDirectory D:\GPTPRJ\EXAMPLE_SCH\<DSN>_checkdata_package')
+add_code(doc, '1) Capture Tcl Window:\n   source {D:/GPTPRJ/DSNCheck/export/cadence/capture_export_active.tcl}\n\n2) PowerShell:\n   & D:/GPTPRJ/DSNCheck/normalize/Export-DSNCheckPackage.ps1 `\n     -InputDirectory D:/GPTPRJ/EXAMPLE_SCH/<DSN>_checkdata\n\n3) PowerShell:\n   & D:/GPTPRJ/DSNCheck/check/generic/Run-DSNCheck.ps1 `\n     -InputDirectory D:/GPTPRJ/EXAMPLE_SCH/<DSN>_checkdata_package')
 doc.add_paragraph('若指定 OutputDirectory，应使用纯 ASCII 路径；Capture 16.6 内置 Tcl 8.4 对中文路径兼容性较差。')
 
 doc.add_heading('9. 当前验证结果与已知限制', level=1)

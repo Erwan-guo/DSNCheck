@@ -1,0 +1,11 @@
+{
+  "net_naming": { "name": "uppercase nets", "required_pattern": "^[A-Z][A-Z0-9_]*$", "exclude_pattern": "^(?:3V3|NULL)$" },
+  "slow_slew": [{ "name": "slow output", "part_pattern": "^U1 ", "pin_pattern": "^OUT$", "rise_ns": 35, "max_rise_ns": 20 }],
+  "bias_rules": [
+    { "name": "OE up", "category": "OE上拉检查", "part_pattern": "^U1 ", "pin_pattern": "^OE$", "direction": "up", "rail_pattern": "^3V3$", "min_ohms": 1000, "max_ohms": 20000 },
+    { "name": "missing", "category": "复位信号上拉或下拉检查", "part_pattern": "^U999 ", "pin_pattern": "^RESET$", "direction": "down" }
+  ],
+  "bus_hold": [{ "name": "bus hold", "part_pattern": "^U2 ", "pin_pattern": "^IN$", "mode": "external_required" }],
+  "differential_pairs": [{ "name": "pair", "part_pattern": "^U3 ", "positive_pin": "^DP$", "negative_pin": "^DN$" }],
+  "clock_series": [{ "name": "clock", "part_pattern": "^U4 ", "pin_pattern": "^CLK$", "max_ohms": 33 }]
+}

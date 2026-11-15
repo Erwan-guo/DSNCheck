@@ -1,0 +1,27 @@
+{"record":"user_property","owner_id":"C1","name":"Type","value":"cap"}
+{"record":"user_property","owner_id":"C1","name":"Rated Voltage","value":"10V"}
+{"record":"user_property","owner_id":"C2","name":"Type","value":"cap"}
+{"record":"user_property","owner_id":"C2","name":"Rated Voltage","value":"6V"}
+{"record":"user_property","owner_id":"C3","name":"Type","value":"cap"}
+{"record":"user_property","owner_id":"C3","name":"Rated Voltage","value":"5V"}
+{"record":"user_property","owner_id":"C4","name":"Type","value":"cap"}
+{"record":"user_property","owner_id":"C4","name":"Rated Voltage","value":"4V"}
+{"record":"user_property","owner_id":"C5","name":"Type","value":"cap_polar"}
+{"record":"user_property","owner_id":"C5","name":"Rated Voltage","value":"10V"}
+{"record":"user_property","owner_id":"C6","name":"Type","value":"cap_polar"}
+{"record":"user_property","owner_id":"C6","name":"Rated Voltage","value":"6.3V"}
+{"record":"user_property","owner_id":"C7","name":"Type","value":"cap"}
+{"record":"user_property","owner_id":"C8","name":"Type","value":"cap"}
+{"record":"user_property","owner_id":"C8","name":"Rated Voltage","value":"10V"}
+{"record":"user_property","owner_id":"C10","name":"Type","value":"cap"}
+{"record":"user_property","owner_id":"C10","name":"Other Type","value":"cap_polar"}
+{"record":"user_property","owner_id":"C11","name":"Type","value":"cap_polar"}
+{"record":"user_property","owner_id":"C11","name":"Rated Voltage","value":"10V"}
+{"record":"user_property","owner_id":"C12","name":"Type","value":"cap"}
+{"record":"user_property","owner_id":"C12","name":"TEN","value":"16V"}
+{"record":"user_property","owner_id":"C13","name":"Type","value":"cap"}
+{"record":"user_property","owner_id":"C13","name":"Rated Voltage","value":"4V"}
+{"record":"user_property","owner_id":"C14","name":"Type","value":"cap"}
+{"record":"user_property","owner_id":"C14","name":"Rated Voltage","value":"10V"}
+{"record":"user_property","owner_id":"C14","name":"Voltage Rating","value":"16V"}
+{"record":"user_property","owner_id":"C15","name":"Type","value":"cap_polar"}

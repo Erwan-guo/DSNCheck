@@ -1,0 +1,5 @@
+{
+  "latch_rc_filter": [
+    { "name": "other latch", "part_pattern": "^U9 ", "pin_pattern": "^LE$", "series_ohms": 33, "shunt_pf": 33 }
+  ]
+}

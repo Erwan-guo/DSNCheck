@@ -1,0 +1,5 @@
+{
+  "bias_rules": [
+    { "name": "required external interrupt pull", "category": "中断信号上拉或下拉检查", "part_pattern": "^U3 ", "pin_pattern": "^INT_N$", "direction": "down", "require_external_bias": true }
+  ]
+}

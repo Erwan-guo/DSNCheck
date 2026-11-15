@@ -2,7 +2,9 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$OutputDirectory,
-    [double]$FilterCapDistance = 250
+    [double]$FilterCapDistance = 250,
+    [string]$RulesFile,
+    [string]$PowerMap
 )
 
 Set-StrictMode -Version Latest
@@ -13,12 +15,31 @@ $objectsPath = Join-Path $outputPath 'dbo\objects.jsonl'
 if (-not (Test-Path -LiteralPath $objectsPath -PathType Leaf)) {
     throw "Dbo object export was not found: $objectsPath"
 }
+if (-not $PowerMap) { $PowerMap = Join-Path $outputPath 'power_nets.confirmed.json' }
+$powerMapPath = [IO.Path]::GetFullPath($PowerMap)
+if (-not (Test-Path -LiteralPath $powerMapPath -PathType Leaf)) {
+    throw "Confirmed power map missing: $powerMapPath. Run Invoke-PowerNetReview.ps1 -Mode Draft, review the CSV, then -Mode Confirm."
+}
+$powerMapData = Get-Content -LiteralPath $powerMapPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ([int]$powerMapData.schema_version -ne 1 -or $powerMapData.source_sha256 -ne (Get-FileHash -LiteralPath $objectsPath -Algorithm SHA256).Hash) {
+    throw 'Confirmed power map does not match this Dbo export. Repeat Draft and Confirm.'
+}
 
 $pins = New-Object System.Collections.Generic.List[object]
 $allPins = New-Object System.Collections.Generic.List[object]
 $parts = @{}
-$globals = New-Object System.Collections.Generic.List[object]
 $powerNets = New-Object System.Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
+$groundNets = New-Object System.Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
+foreach ($entry in $powerMapData.nets) {
+    $net = [string]$entry.net
+    if (-not $net) { throw 'Confirmed power map contains an empty net name.' }
+    switch ([string]$entry.kind) {
+        'power' { if (-not $powerNets.Add($net)) { throw "Duplicate power network: $net" } }
+        'ground' { if (-not $groundNets.Add($net)) { throw "Duplicate ground network: $net" } }
+        default { throw "Invalid confirmed network kind for $net" }
+    }
+}
+foreach ($net in $powerNets) { if ($groundNets.Contains($net)) { throw "Network confirmed as both power and ground: $net" } }
 
 function Convert-ToNumber {
     param([object]$Value)
@@ -39,25 +60,16 @@ function Test-PowerPin {
 
 function Test-GroundNet {
     param([string]$Name)
-    return ($Name -and $Name -match '(?i)(GND|GROUND|AGND|DGND|PGND|VSS|EARTH)')
+    return ($Name -and $groundNets.Contains($Name))
 }
 
-function Test-PowerNetName {
-    param([string]$Name)
-    # Valid supply names must contain one of the approved voltage forms:
-    #   3V75       (integer before V, digits after V)
-    #   3.75V      (decimal number followed by V)
-    # Prefixes/suffixes such as SYS_3V3 or 3.75V_Eth are allowed.
-    return ($Name -and $Name -match '(?i)(?:[0-9]+V[0-9]+|[0-9]+\.[0-9]+V)')
-}
-
-foreach ($line in [IO.File]::ReadLines($objectsPath)) {
+foreach ($line in [IO.File]::ReadAllLines($objectsPath)) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
     try { $record = $line | ConvertFrom-Json } catch { continue }
     if ($null -eq $record.record) { continue }
     switch ([string]$record.record) {
         'part' {
-            $parts[[string]$record.id] = [pscustomobject]@{ id=[string]$record.id; page_id=[string]$record.page_id; reference=[string]$record.reference; value=[string]$record.value; left=(Convert-ToNumber $record.left); top=(Convert-ToNumber $record.top); right=(Convert-ToNumber $record.right); bottom=(Convert-ToNumber $record.bottom) }
+            $parts[[string]$record.id] = [pscustomobject]@{ id=[string]$record.id; page_id=[string]$record.page_id; reference=[string]$record.reference; value=[string]$record.value; source_part=[string]$record.source_part; footprint=[string]$record.pcb_footprint; left=(Convert-ToNumber $record.left); top=(Convert-ToNumber $record.top); right=(Convert-ToNumber $record.right); bottom=(Convert-ToNumber $record.bottom) }
         }
         'pin' {
             $net = [string]$record.net_name
@@ -65,17 +77,7 @@ foreach ($line in [IO.File]::ReadLines($objectsPath)) {
             $allPins.Add($pin)
             if ($net -and $net -ne 'NULL' -and -not $pin.no_connect) { $pins.Add($pin) }
         }
-        'global' {
-            $net = [string]$record.net_name
-            $name = [string]$record.name
-            $globals.Add([pscustomobject]@{ id=[string]$record.id; page_id=[string]$record.page_id; name=$name; net=$net })
-            if ((Test-PowerNetName $name) -and $net) { [void]$powerNets.Add($net) }
-        }
     }
-}
-
-foreach ($net in ($pins | Select-Object -ExpandProperty net -Unique)) {
-    if (Test-PowerNetName $net) { [void]$powerNets.Add($net) }
 }
 
 $groups = @{}
@@ -86,30 +88,11 @@ foreach ($pin in $pins) {
 
 $errors = New-Object System.Collections.Generic.List[object]
 
-# 1. Capture does not expose a separate ground-symbol subtype in this export;
-# unnamed global symbols are reported as unnamed ground/power symbols.
-foreach ($global in $globals) {
-    if ([string]::IsNullOrWhiteSpace($global.name)) {
-        $errors.Add([pscustomobject]@{ category='地符号未标注名称'; rule='地符号的名称为空'; page=$global.page_id; object_id=$global.id; details=('page={0}; object={1}' -f $global.page_id, $global.id) })
-    }
-}
-
-# 2. A Power pin is externally powered when its net has an active device pin
-# or an explicit power-like net name. Nets containing only power pins/passives
-# are treated as not externally driven.
+# Only a user-confirmed supply network counts as an external rail.
 $powerPins = @($allPins | Where-Object { Test-PowerPin $_ })
 foreach ($powerPin in $powerPins) {
     $net = [string]$powerPin.net
-    $connected = (-not $powerPin.no_connect -and $powerPin.connected -and $net -and $net -ne 'NULL')
-    $members = @()
-    if ($connected -and $groups.ContainsKey($net)) { $members = @($groups[$net].ToArray()) }
-    $active = @()
-    foreach ($member in $members) {
-        if ($member.owner_id -eq $powerPin.owner_id -or -not $parts.ContainsKey($member.owner_id)) { continue }
-        $reference = [string]$parts[$member.owner_id].reference
-        if ($reference -notmatch '^(?i:[RCL][0-9A-Z_]*)$' -and -not (Test-PowerPin $member)) { $active += $member }
-    }
-    $external = ($active.Count -gt 0 -or (Test-PowerNetName $net))
+    $external = (-not $powerPin.no_connect -and $powerPin.connected -and $powerNets.Contains($net))
     if (-not $external) {
         $part = $null
         if ($parts.ContainsKey($powerPin.owner_id)) { $part = $parts[$powerPin.owner_id] }
@@ -130,7 +113,7 @@ foreach ($powerPin in $powerPins) {
     if (-not $powerPin.net -or $powerPin.net -eq 'NULL' -or -not $parts.ContainsKey($powerPin.owner_id)) { continue }
     # Ground pins and reference-voltage pins are not supply rails and should
     # not create a decoupling-capacitor requirement.
-    if ((Test-GroundNet ([string]$powerPin.net)) -or [string]$powerPin.name -match '(?i)(GND|GROUND|VSS|REF)') { continue }
+    if (-not $powerNets.Contains([string]$powerPin.net)) { continue }
     $part = $parts[$powerPin.owner_id]
     if ([string]$part.reference -match '^(?i:[RCL][0-9A-Z_]*)$') { continue }
     $key = $powerPin.owner_id + '|' + $powerPin.net
@@ -185,25 +168,31 @@ foreach ($net in ($groups.Keys | Sort-Object)) {
     }
 }
 
-$categoryOrder = @('单节点网络', '孤立电源', '伪单节点网络', '地符号未标注名称', 'Power引脚未外接电源', '供电器件缺少就近滤波电容')
+$additional = & (Join-Path $PSScriptRoot 'Invoke-DSNCheck-Additional.ps1') -OutputDirectory $outputPath -RulesFile $RulesFile -Parts $parts -AllPins $allPins -Pins $pins -Groups $groups -PowerNets $powerNets -GroundNets $groundNets -PowerNetEntries $powerMapData.nets
+foreach ($issue in $additional.issues) { $errors.Add($issue) }
+$categoryOrder = @('单节点网络', '孤立电源', '伪单节点网络', 'Power引脚未外接电源', '供电器件缺少就近滤波电容') + @($additional.categories)
 $summary = [ordered]@{}
 foreach ($category in $categoryOrder) { $summary[$category] = @($errors | Where-Object category -eq $category).Count }
-$report = [ordered]@{ schema_version='1.1'; generated_at=(Get-Date).ToString('s'); filter_cap_distance=$FilterCapDistance; summary=$summary; errors=@($errors.ToArray()) }
+$report = [ordered]@{ schema_version='1.4'; generated_at=(Get-Date).ToString('s'); filter_cap_distance=$FilterCapDistance; power_map=$powerMapPath; confirmed_power_nets=$powerNets.Count; confirmed_ground_nets=$groundNets.Count; rule_coverage=$additional.coverage; configured_rule_targets=$additional.rule_coverage; summary=$summary; errors=@($errors.ToArray()) }
 $jsonPath = Join-Path $outputPath 'dsn_check_report.json'
 $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
 
 $textPath = Join-Path $outputPath 'dsn_check_report.txt'
 $text = New-Object System.Collections.Generic.List[string]
 $text.Add('Cadence DSN 原理图检查报告'); $text.Add(('生成时间: ' + $report.generated_at)); $text.Add('')
+$text.Add('规则覆盖:')
+foreach ($key in $additional.coverage.Keys) { $text.Add(('  {0}: {1}' -f $key, $additional.coverage[$key])) }
+$text.Add('')
 foreach ($category in $categoryOrder) {
     $items = @($errors | Where-Object category -eq $category)
     $text.Add(('[{0}] {1} 项' -f $category, $items.Count))
     foreach ($item in $items) {
         if ($item.PSObject.Properties.Name -contains 'count') { $text.Add(('  网络={0}; 连接数={1}; 器件={2}; 引脚={3}' -f $item.net, $item.count, $item.parts, $item.details)) }
+        elseif ($item.PSObject.Properties.Name -contains 'status') { $text.Add(('  [{0}] {1}; {2}' -f $item.status, $item.rule, $item.details)) }
         else { $text.Add(('  {0}' -f $item.details)) }
     }
     $text.Add('')
 }
 $text | Set-Content -LiteralPath $textPath -Encoding UTF8
 Write-Output ('DSN check report: ' + $textPath)
-Write-Output ('单节点网络={0}; 孤立电源={1}; 伪单节点网络={2}; 地符号未标注名称={3}; Power引脚未外接电源={4}; 供电器件缺少就近滤波电容={5}' -f $summary['单节点网络'], $summary['孤立电源'], $summary['伪单节点网络'], $summary['地符号未标注名称'], $summary['Power引脚未外接电源'], $summary['供电器件缺少就近滤波电容'])
+Write-Output ('单节点网络={0}; 孤立电源={1}; 伪单节点网络={2}; Power引脚未外接电源={3}; 供电器件缺少就近滤波电容={4}' -f $summary['单节点网络'], $summary['孤立电源'], $summary['伪单节点网络'], $summary['Power引脚未外接电源'], $summary['供电器件缺少就近滤波电容'])

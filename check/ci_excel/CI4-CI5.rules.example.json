@@ -1,0 +1,44 @@
+{
+  "power_input_rules": [
+    {
+      "name": "一次电源",
+      "pattern": "(?i)(VIN|VBUS|VMAIN|12V|24V|5V(?:_?IN)?)",
+      "topology": "series",
+      "value_uF": 10,
+      "count": 2,
+      "dielectric": "ceramic"
+    },
+    {
+      "name": "模拟电源",
+      "pattern": "(?i)(AVDD|AVCC|ANALOG|VREF|VA[0-9_])",
+      "topology": "parallel",
+      "value_uF": [1, 0.1],
+      "count": 2,
+      "dielectric": "ceramic"
+    },
+    {
+      "name": "数字电源",
+      "pattern": "(?i)(DVDD|DVCC|VDD|VCC|VIO|DIGITAL|3V3|1V8|1V2|1V0)",
+      "topology": "series",
+      "value_uF": 22,
+      "count": 2,
+      "dielectric": "tantalum"
+    }
+  ],
+  "pgood_pattern": "(?i)(PGOOD|PWRGOOD|POWER[_ ]?GOOD)",
+  "boot_mode_pattern": "(?i)(BOOT|DOWNLOAD|DL[_ ]?MODE|BOOTMODE|BMODE|CFG[0-9]+)",
+  "reset_pattern": "(?i)(^|[_\\- ])(?:RESET|NRST|NRESET|SYSRST|POR)([_\\- ]|$)",
+  "power_timing_ns": {
+    "3V3": { "good_ns": 500000, "ready_ns": 800000 },
+    "1V8": { "good_ns": 700000, "ready_ns": 1000000 }
+  },
+  "bus_mappings": [
+    {
+      "pattern": "(?i)^DATA\\[",
+      "members": {
+        "DATA0": [{ "name": "D0" }],
+        "DATA1": [{ "name": "D1" }]
+      }
+    }
+  ]
+}

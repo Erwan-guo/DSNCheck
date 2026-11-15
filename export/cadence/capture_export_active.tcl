@@ -8,10 +8,4 @@ if {[catch {set capcheckOutput [::capcheck::mainActive]} capcheckMessage]} {
     puts "CapCheck export failed: $capcheckMessage"
 } else {
     puts "CapCheck export completed: $capcheckOutput"
-    set capcheckChecker [file normalize [file join $capcheckScriptDir .. Invoke-DSNCheck.ps1]]
-    if {[catch {set capcheckReport [exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File $capcheckChecker -OutputDirectory $capcheckOutput]} capcheckCheckMessage]} {
-        puts "DSN category check failed: $capcheckCheckMessage"
-    } else {
-        puts $capcheckReport
-    }
 }

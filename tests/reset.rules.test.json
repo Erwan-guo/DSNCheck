@@ -1,0 +1,5 @@
+{
+  "bias_rules": [
+    { "name": "legacy direction", "category": "复位信号上拉或下拉检查", "part_pattern": "^U3 ", "pin_pattern": "^RSTN$", "direction": "down" }
+  ]
+}
