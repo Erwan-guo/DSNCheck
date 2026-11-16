@@ -24,6 +24,8 @@ $powerMapData = Get-Content -LiteralPath $powerMapPath -Raw -Encoding UTF8 | Con
 if ([int]$powerMapData.schema_version -ne 1 -or $powerMapData.source_sha256 -ne (Get-FileHash -LiteralPath $objectsPath -Algorithm SHA256).Hash) {
     throw 'Confirmed power map does not match this Dbo export. Repeat Draft and Confirm.'
 }
+$powerMapReviewStatus = if ($powerMapData.PSObject.Properties.Name -contains 'review_status') { [string]$powerMapData.review_status } else { 'user_confirmed' }
+if ($powerMapReviewStatus -notin @('user_confirmed','provisional')) { throw 'Invalid power map review status.' }
 
 $pins = New-Object System.Collections.Generic.List[object]
 $allPins = New-Object System.Collections.Generic.List[object]
@@ -86,19 +88,32 @@ foreach ($pin in $pins) {
     $groups[$pin.net].Add($pin)
 }
 
+$connectorParts = @{}
+$propertiesPath = Join-Path $outputPath 'dbo\properties.jsonl'
+if (Test-Path -LiteralPath $propertiesPath -PathType Leaf) {
+    foreach ($line in [IO.File]::ReadLines($propertiesPath)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $property = $line | ConvertFrom-Json
+        if ([string]$property.record -ne 'user_property' -or [string]$property.name -notmatch '^(?i:Part Type)$') { continue }
+        if ([string]$property.value -match '(?i)插座|连接器|connector|socket') { $connectorParts[[string]$property.owner_id] = $true }
+    }
+}
+
 $errors = New-Object System.Collections.Generic.List[object]
 
 # Only a user-confirmed supply network counts as an external rail.
 $powerPins = @($allPins | Where-Object { Test-PowerPin $_ })
 foreach ($powerPin in $powerPins) {
     $net = [string]$powerPin.net
-    $external = (-not $powerPin.no_connect -and $powerPin.connected -and $powerNets.Contains($net))
+    $external = (-not $powerPin.no_connect -and $powerPin.connected -and ($powerNets.Contains($net) -or $groundNets.Contains($net)))
     if (-not $external) {
+        if ($powerPin.connected -and -not $powerPin.no_connect -and $net -and $net -ne 'NULL' -and $connectorParts.ContainsKey([string]$powerPin.owner_id)) { continue }
         $part = $null
         if ($parts.ContainsKey($powerPin.owner_id)) { $part = $parts[$powerPin.owner_id] }
         $reference = if ($null -ne $part) { [string]$part.reference } else { [string]$powerPin.owner_id }
         $pinText = '{0}({1})' -f $powerPin.name, $powerPin.number
-        $errors.Add([pscustomobject]@{ category='Power引脚未外接电源'; rule='器件Power属性引脚没有检测到外部电源网络'; page=$powerPin.page_id; part=$reference; pin=$pinText; net=$net; details=('器件={0}; 引脚={1}; 网络={2}' -f $reference, $pinText, $net) })
+        $status = if ($net -and $powerMapReviewStatus -eq 'provisional') { 'manual_review' } else { 'error' }
+        $errors.Add([pscustomobject]@{ category='Power引脚未外接电源'; status=$status; rule='器件Power属性引脚未连接已确认的电源/地网络'; page=$powerPin.page_id; part=$reference; pin=$pinText; net=$net; details=('器件={0}; 引脚={1}; 网络={2}' -f $reference, $pinText, $net) })
     }
 }
 
@@ -173,13 +188,14 @@ foreach ($issue in $additional.issues) { $errors.Add($issue) }
 $categoryOrder = @('单节点网络', '孤立电源', '伪单节点网络', 'Power引脚未外接电源', '供电器件缺少就近滤波电容') + @($additional.categories)
 $summary = [ordered]@{}
 foreach ($category in $categoryOrder) { $summary[$category] = @($errors | Where-Object category -eq $category).Count }
-$report = [ordered]@{ schema_version='1.4'; generated_at=(Get-Date).ToString('s'); filter_cap_distance=$FilterCapDistance; power_map=$powerMapPath; confirmed_power_nets=$powerNets.Count; confirmed_ground_nets=$groundNets.Count; rule_coverage=$additional.coverage; configured_rule_targets=$additional.rule_coverage; summary=$summary; errors=@($errors.ToArray()) }
+$report = [ordered]@{ schema_version='1.4'; generated_at=(Get-Date).ToString('s'); filter_cap_distance=$FilterCapDistance; power_map=$powerMapPath; power_map_review_status=$powerMapReviewStatus; confirmed_power_nets=$powerNets.Count; confirmed_ground_nets=$groundNets.Count; rule_coverage=$additional.coverage; configured_rule_targets=$additional.rule_coverage; summary=$summary; errors=@($errors.ToArray()) }
 $jsonPath = Join-Path $outputPath 'dsn_check_report.json'
 $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
 
 $textPath = Join-Path $outputPath 'dsn_check_report.txt'
 $text = New-Object System.Collections.Generic.List[string]
 $text.Add('Cadence DSN 原理图检查报告'); $text.Add(('生成时间: ' + $report.generated_at)); $text.Add('')
+if ($powerMapReviewStatus -eq 'provisional') { $text.Add('注意: 电源/地网络映射未经用户确认；电源相关结论为临时结果。'); $text.Add('') }
 $text.Add('规则覆盖:')
 foreach ($key in $additional.coverage.Keys) { $text.Add(('  {0}: {1}' -f $key, $additional.coverage[$key])) }
 $text.Add('')
@@ -188,7 +204,9 @@ foreach ($category in $categoryOrder) {
     $text.Add(('[{0}] {1} 项' -f $category, $items.Count))
     foreach ($item in $items) {
         if ($item.PSObject.Properties.Name -contains 'count') { $text.Add(('  网络={0}; 连接数={1}; 器件={2}; 引脚={3}' -f $item.net, $item.count, $item.parts, $item.details)) }
-        elseif ($item.PSObject.Properties.Name -contains 'status') { $text.Add(('  [{0}] {1}; {2}' -f $item.status, $item.rule, $item.details)) }
+        elseif ($item.PSObject.Properties.Name -contains 'status') {
+            $text.Add(('  [{0}] {1}; page={2}; 器件={3}; 引脚={4}; 网络={5}; {6}' -f $item.status, $item.rule, $item.page, $item.part, $item.pin, $item.net, $item.details))
+        }
         else { $text.Add(('  {0}' -f $item.details)) }
     }
     $text.Add('')

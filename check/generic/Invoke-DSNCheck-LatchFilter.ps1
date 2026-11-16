@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [hashtable]$Parts,
     [object]$AllPins,
@@ -99,7 +99,7 @@ foreach ($part in $Parts.Values) {
     if (-not (Test-TargetPart $part)) { continue }
     $partPins = if ($pinsByPart.ContainsKey([string]$part.id)) { @($pinsByPart[[string]$part.id].ToArray()) } else { @() }
     $family = [regex]::Match(([string]$part.value + ' ' + [string]$part.source_part), '(?<!\d)(?<family>273|373|573)(?!\d)').Groups['family'].Value
-    $pinPattern = if ($family -eq '273') { '^(?i:CLK|CK|CP|CLOCK)$' } else { '^(?i:LE|LAT|LATCH|LATCH_EN)$' }
+    $pinPattern = if ($family -eq '273') { '(?i)CLK|CLOCK|(?:^|[_/\d])(?:CK|CP)(?=$|[_/\d])' } else { '(?i)LATCH|LAT|(?:^|[_/\d])LE(?=$|[_/\d])' }
     $matchingPins = @($partPins | Where-Object { [string]$_.name -match $pinPattern })
     if ($matchingPins.Count -eq 0) {
         $issues.Add([pscustomobject]@{ category=$category; status='manual_review'; rule='无法识别时钟或锁存输入引脚'; page=[string]$part.page_id; part=[string]$part.reference; pin=''; net=''; details=("器件=$($part.reference); 型号=$($part.value); 需配置 latch_rc_filter.pin_pattern") })

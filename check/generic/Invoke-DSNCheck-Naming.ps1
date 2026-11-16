@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [hashtable]$Parts,
@@ -71,8 +71,10 @@ if (Test-Path -LiteralPath $objectsPath -PathType Leaf) { foreach ($line in [IO.
 } }
 
 $symbolNets = @{}
+$symbolNetCertain = @{}
 $symbolsByPageNet = @{}
 $symbolNames = @{}
+$nameBasedReviews = @{}
 foreach ($symbol in $symbols) {
     $name = ([string]$symbol.name).Trim()
     $page = [string]$symbol.page_id
@@ -80,6 +82,7 @@ foreach ($symbol in $symbols) {
     if (-not $symbolNames.ContainsKey($name)) { $symbolNames[$name] = @{} }
     $symbolNames[$name][$page] = $true
     $net = [string]$symbol.net_name
+    $netCertain = [bool]$net
     if (-not $net -and $wiresByPage.ContainsKey($page)) {
         $nearest = @{}
         $left = [double]$symbol.left; $right = [double]$symbol.right
@@ -94,14 +97,23 @@ foreach ($symbol in $symbols) {
                 if (-not $nearest.ContainsKey($candidate) -or $distance -lt $nearest[$candidate]) { $nearest[$candidate] = $distance }
             }
         }
-        if ($nearest.Count -gt 0) {
+        if ($nearest.Count -eq 1) {
+            $net = @($nearest.Keys)[0]
+            $netCertain = $true
+        } elseif ($nearest.ContainsKey($name)) {
+            $net = $name
             $minimum = @($nearest.Values | Measure-Object -Minimum)[0].Minimum
-            $best = @($nearest.Keys | Where-Object { $nearest[$_] -eq $minimum })
-            if ($best.Count -eq 1) { $net = $best[0] }
+            $closest = @($nearest.Keys | Where-Object { $nearest[$_] -eq $minimum })
+            if ($closest.Count -eq 1 -and $closest[0] -ne $name) {
+                $reviewKey = $page + [char]31 + $closest[0]
+                if (-not $nameBasedReviews.ContainsKey($reviewKey)) { $nameBasedReviews[$reviewKey] = New-Object System.Collections.Generic.List[string] }
+                $nameBasedReviews[$reviewKey].Add($name)
+            }
         }
     }
     if (-not $net -or $net -eq 'NULL') { continue }
     $symbolNets[[string]$symbol.id] = $net
+    $symbolNetCertain[[string]$symbol.id] = $netCertain
     $key = $page + [char]31 + $net
     if (-not $symbolsByPageNet.ContainsKey($key)) { $symbolsByPageNet[$key] = New-Object System.Collections.Generic.List[object] }
     $symbolsByPageNet[$key].Add($symbol)
@@ -113,7 +125,17 @@ foreach ($key in $symbolsByPageNet.Keys) {
     if ($names.Count -lt 2) { continue }
     $page = [string]$items[0].page_id
     $net = [string]$symbolNets[[string]$items[0].id]
-    Add-NamingIssue 'error' '不同名称的Off-page/电源符号直连' $page '' $net ("page=$page; 网络=$net; 符号名=$($names -join ', ')")
+    $certain = @($items | Where-Object { -not $symbolNetCertain[[string]$_.id] }).Count -eq 0
+    $status = if ($certain) { 'error' } else { 'manual_review' }
+    $rule = if ($certain) { '不同名称的Off-page/电源符号直连' } else { 'Off-page/电源符号网络关联不确定' }
+    Add-NamingIssue $status $rule $page '' $net ("page=$page; 网络=$net; 符号名=$($names -join ', ')")
+}
+
+foreach ($key in $nameBasedReviews.Keys) {
+    $fields = $key.Split([char]31)
+    $page = $fields[0]; $nearNet = $fields[1]
+    $names = @($nameBasedReviews[$key] | Select-Object -Unique)
+    Add-NamingIssue 'manual_review' 'Off-page/电源符号网络关联待确认' $page '' $nearNet ("page=$page; 邻近网络=$nearNet; 符号及同名导线=$($names -join ', '); 符号net_name为空，需确认实际连接点")
 }
 
 $missingSeen = @{}

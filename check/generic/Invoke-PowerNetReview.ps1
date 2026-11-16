@@ -50,14 +50,30 @@ foreach ($line in [IO.File]::ReadAllLines($objectsPath)) {
 
 function Get-Voltage {
     param([string]$Name)
-    $match = [regex]::Match($Name, '(?i)(?<whole>\d+)V(?<fraction>\d+)|(?<decimal>\d+\.\d+)V')
+    $match = [regex]::Match($Name, '(?i)(?<sign>[+-]?)(?<whole>\d+)(?:\.(?<decimal>\d+))?V(?<fraction>\d+)?')
     if (-not $match.Success) { return '' }
-    $number = if ($match.Groups['decimal'].Success) { $match.Groups['decimal'].Value } else { $match.Groups['whole'].Value + '.' + $match.Groups['fraction'].Value }
+    $number = $match.Groups['whole'].Value
+    if ($match.Groups['decimal'].Success) { $number += '.' + $match.Groups['decimal'].Value }
+    elseif ($match.Groups['fraction'].Success) { $number += '.' + $match.Groups['fraction'].Value }
+    if ($match.Groups['sign'].Value -eq '-') { $number = '-' + $number }
     return ([double]::Parse($number, [Globalization.CultureInfo]::InvariantCulture)).ToString('0.########', [Globalization.CultureInfo]::InvariantCulture)
 }
 function Test-GroundName {
     param([string]$Name)
-    return ($Name -match '(?i)(?:^|[_\-\s])(?:GND|GROUND|AGND|DGND|PGND|VSS|EARTH)(?:$|[_\-\s])')
+    return ($Name -match '(?i)GND|GROUND|VSS|EARTH')
+}
+function Test-PowerName {
+    param([string]$Name)
+    return ($Name -match '(?i)V')
+}
+function Resolve-Seeds {
+    param([object[]]$Seeds, [string]$VoltageField)
+    $kinds = @($Seeds | ForEach-Object { $_.kind } | Select-Object -Unique)
+    if ($kinds.Count -ne 1) { return [pscustomobject]@{ kind='conflict'; voltage='' } }
+    if ($kinds[0] -eq 'ground') { return [pscustomobject]@{ kind='ground'; voltage='' } }
+    $voltages = @($Seeds | ForEach-Object { [string]($_.$VoltageField) } | Where-Object { $_ } | Select-Object -Unique)
+    if ($voltages.Count -gt 1) { return [pscustomobject]@{ kind='conflict'; voltage='' } }
+    return [pscustomobject]@{ kind='power'; voltage=$(if ($voltages.Count -eq 1) { $voltages[0] } else { '' }) }
 }
 function Add-Seed {
     param([hashtable]$Map, [string]$Net, [string]$Kind, [string]$Voltage, [string]$Why)
@@ -84,12 +100,12 @@ $pinHints = @{}
 foreach ($net in $netNames) {
     if (Test-GroundName $net) { Add-Seed $hardSeeds $net 'ground' '' "network name: $net" }
     $voltage = Get-Voltage $net
-    if ($voltage) { Add-Seed $hardSeeds $net 'power' $voltage "network name: $net" }
+    if ($voltage -or (Test-PowerName $net)) { Add-Seed $hardSeeds $net 'power' $voltage "network name: $net" }
 }
 foreach ($symbol in $symbols) {
     if (Test-GroundName $symbol.name) { Add-Seed $hardSeeds $symbol.net 'ground' '' "global symbol: $($symbol.name)" }
     $voltage = Get-Voltage $symbol.name
-    if ($voltage) { Add-Seed $hardSeeds $symbol.net 'power' $voltage "global symbol: $($symbol.name)" }
+    if ($voltage -or (Test-PowerName $symbol.name)) { Add-Seed $hardSeeds $symbol.net 'power' $voltage "global symbol: $($symbol.name)" }
 }
 foreach ($pin in $pins) {
     if (-not $pin.connected -or $pin.no_connect -or -not $pin.net -or $pin.net -eq 'NULL') { continue }
@@ -155,9 +171,9 @@ foreach ($start in $netNames) {
         }
     }
     if ($seeds.Count -eq 0) { continue }
-    $identities = @($seeds | ForEach-Object { $_.kind + ':' + $_.voltage } | Select-Object -Unique)
-    $kind = if ($identities.Count -eq 1) { [string]$seeds[0].kind } else { 'conflict' }
-    $voltage = if ($kind -eq 'power') { [string]$seeds[0].voltage } else { '' }
+    $resolved = Resolve-Seeds @($seeds.ToArray()) 'voltage'
+    $kind = $resolved.kind
+    $voltage = $resolved.voltage
     $evidence = (@($seeds | ForEach-Object { $_.evidence } | Select-Object -Unique) + @($bridges | Select-Object -Unique)) -join '; '
     foreach ($member in $members) {
         $source = if ($hardSeeds.ContainsKey($member)) { 'name_or_symbol' } elseif ($origin -eq 'pin_hint' -and $pinHints.ContainsKey($member)) { 'pin_hint' } else { 'bridge' }
@@ -176,9 +192,9 @@ foreach ($edge in $strongEdges) {
 }
 foreach ($net in $strongCandidates.Keys) {
     $items = @($strongCandidates[$net].ToArray())
-    $identities = @($items | ForEach-Object { $_.kind + ':' + $_.voltage_v } | Select-Object -Unique)
-    $kind = if ($identities.Count -eq 1) { [string]$items[0].kind } else { 'conflict' }
-    $voltage = if ($kind -eq 'power') { [string]$items[0].voltage_v } else { '' }
+    $resolved = Resolve-Seeds $items 'voltage_v'
+    $kind = $resolved.kind
+    $voltage = $resolved.voltage
     $suggestions[$net] = [pscustomobject]@{ net=$net; kind=$kind; voltage_v=$voltage; source='strong_pull_review'; evidence=(($items | ForEach-Object { $_.evidence }) -join '; ') }
 }
 
@@ -213,7 +229,7 @@ foreach ($row in $rows) {
     if ($kind -notin @('power','ground')) { throw "Accepted network needs kind=power or ground: $net" }
     $voltage = ([string]$row.voltage_v).Trim()
     if ($kind -eq 'ground' -and $voltage) { throw "Ground network must not have voltage_v: $net" }
-    if ($voltage -and $voltage -notmatch '^\d+(?:\.\d+)?$') { throw "Invalid voltage_v for network: $net" }
+    if ($voltage -and $voltage -notmatch '^-?\d+(?:\.\d+)?$') { throw "Invalid voltage_v for network: $net" }
     $accepted.Add([pscustomobject]@{ net=$net; kind=$kind; voltage_v=$voltage; source=[string]$row.source; evidence=[string]$row.evidence })
 }
 foreach ($net in $meta.candidate_nets) {
