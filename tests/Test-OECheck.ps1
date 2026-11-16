@@ -73,12 +73,12 @@ foreach ($part in @('U1','U2','U3','U4','U10')) { Assert-Issue $part '外部驱�
 Assert-Issue U4 'OE偏置仅位于串阻驱动侧' 'manual_review'
 Assert-Issue U3 '串阻驱动侧存在相反偏置' 'manual_review'
 Assert-Issue U5 '未找到符合要求的外部上拉/下拉电阻' 'error'
-Assert-Issue U6 '未找到符合要求的外部上拉/下拉电阻' 'error'
+Assert-Issue U6 'OE通过电阻永久拉到有效电平' 'manual_review'
 Assert-Issue U7 '未识别到其他芯片驱动OE' 'manual_review'
 Assert-Issue U8 '无法从OE引脚名判断有效电平' 'manual_review'
 Assert-Issue U10 '外部芯片引脚驱动方向未确认' 'manual_review'
 Assert-Issue U11 '未识别到其他芯片驱动OE' 'manual_review'
 Assert-Issue U12 '外部芯片引脚驱动方向未确认' 'manual_review'
 Assert-Issue U12 '未找到符合要求的外部上拉/下拉电阻' 'manual_review'
-if (@($issues | Where-Object { $_.status -eq 'error' }).Count -ne 2) { throw 'Expected exactly two OE bias errors.' }
+if (@($issues | Where-Object { $_.status -eq 'error' }).Count -ne 1) { throw 'Expected exactly one OE bias error.' }
 Write-Output 'OE startup-state tests passed.'

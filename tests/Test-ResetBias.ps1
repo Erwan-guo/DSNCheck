@@ -23,7 +23,7 @@ function Add-Resistor {
     Add-Part $Ref 10K
     Add-Pin $Ref '1' $Net '4'; Add-Pin $Ref '2' $Rail '4'
 }
-foreach ($number in 1..13) { Add-Part "U$number" }
+foreach ($number in 1..26) { Add-Part "U$number" }
 Add-Pin U1 RESET N1; Add-Resistor R1 N1 GND
 Add-Pin U2 RST N2; Add-Resistor R2 N2 GND
 Add-Pin U3 RSTN N3; Add-Resistor R3 N3 3V3
@@ -36,6 +36,23 @@ Add-Pin U9 RESET N9; Add-Pin U10 RSTN N9
 Add-Pin U11 RESET N1
 Add-Pin U12 NRST N12; Add-Resistor R12 N12 3V3
 Add-Pin U13 RSTN RESET; Add-Resistor R13 RESET 3V3
+Add-Pin U14 GPIO_RESET_A N14
+Add-Pin U15 RESET 'RST#'; Add-Resistor R15 'RST#' GND
+Add-Pin U16 'RESET#' 'PFLS_RST/'; Add-Resistor R16 'PFLS_RST/' 3V3
+Add-Pin U17 'GCA0/IO93NDB1' 'F_PORST/' '4'
+Add-Pin U18 'GAA0/IO00RSB0' F_LVTH_PreSet
+Add-Pin U19 'T\R\S\T\' DSP_TRST; Add-Resistor R19 DSP_TRST 3V3
+Add-Pin U20 CTRL 'CPU_RSTOUT/'; Add-Resistor R20 'CPU_RSTOUT/' 3V3
+Add-Pin U21 '1\O\E\' F_LVTH_PreSet
+Add-Pin U22 'OE#' 'OE/'; Add-Resistor R22 'OE/' 3V3
+Add-Pin U23 '2\O\E\' F_LVTH_PreSet
+Add-Pin U24 'OE#' GND
+Add-Pin U25 OE F_CONTROL; Add-Resistor R25 F_CONTROL GND
+Add-Pin U26 'OE#' F_STATIC; Add-Resistor R26 F_STATIC GND
+Add-Part XS1; Add-Pin XS1 TRST DSP_TRST '4'
+Add-Part XP2; Add-Pin XP2 '8' LVTH_PreSet '4'
+Add-Part TX2; Add-Pin TX2 '1' CPU_RSTIN '4'
+Add-Part TX3; Add-Pin TX3 '1' 'CPU_RSTOUT/' '4'
 
 function Invoke-ResetCheck {
     param([string]$RulesFile)
@@ -53,15 +70,28 @@ function Assert-Issue {
 }
 $result = Invoke-ResetCheck ''
 $issues = @($result.issues | Where-Object { $_.category -eq '复位信号上拉或下拉检查' })
+if ($result.coverage['OE上拉检查'] -ne 'automatic') { throw 'OE detection should be automatic without rules.' }
+$oeIssues = @($result.issues | Where-Object { $_.category -eq 'OE上拉检查' })
+Assert-Issue $oeIssues F_LVTH_PreSet '未找到符合要求的外部上拉/下拉电阻' error
+if (@($oeIssues | Where-Object { $_.net -eq 'F_LVTH_PreSet' -and $_.details -match '需要=up' }).Count -ne 1) { throw 'Overbarred OE on PreSet must require a pull-up.' }
+Assert-Issue $oeIssues GND 'OE直接连接电源/地，未通过偏置电阻' error
+Assert-Issue $oeIssues F_STATIC 'OE通过电阻永久拉到有效电平' manual_review
+if (@($oeIssues | Where-Object { $_.net -in @('OE/','F_CONTROL') }).Count -ne 0) { throw 'Correctly biased OE must not be reported.' }
+$namingIssues = @($result.issues | Where-Object { $_.category -eq '网络命名检查' -and $_.rule -eq '控制网络名称缺少有效电平标记' })
+Assert-Issue $namingIssues F_LVTH_PreSet '控制网络名称缺少有效电平标记' manual_review
+if (@($namingIssues | Where-Object { $_.net -in @('LVTH_PreSet','OE/','GND','F_CONTROL') }).Count -ne 0) { throw 'Output, marked, or rail net was incorrectly flagged.' }
 if ($result.coverage['复位信号上拉或下拉检查'] -ne 'automatic') { throw 'Reset detection should be automatic without rules.' }
 Assert-Issue $issues N4 '未找到符合要求的外部上拉/下拉电阻' error
 Assert-Issue $issues N5 '未找到符合要求的外部上拉/下拉电阻' error
 Assert-Issue $issues N9 '同一复位网络的有效电平标记冲突' manual_review
-Assert-Issue $issues RESET '复位引脚与网络名的有效电平标记不一致' manual_review
-foreach ($net in @('N1','N2','N3','N6','N7','RSTN','N12')) {
+Assert-Issue $issues 'RST#' '复位引脚与网络名的有效电平标记不一致' manual_review
+Assert-Issue $issues N14 '未找到符合要求的外部上拉/下拉电阻' error
+Assert-Issue $issues 'F_PORST/' '未找到符合要求的外部上拉/下拉电阻' error
+if (@($issues | Where-Object { $_.net -eq 'F_PORST/' -and $_.details -match '需要=up' }).Count -ne 1) { throw 'Trailing slash must require a pull-up.' }
+foreach ($net in @('N1','N2','N3','N6','N7','RSTN','N12','RESET','PFLS_RST/','DSP_TRST','CPU_RSTOUT/','CPU_RSTIN','F_LVTH_PreSet','LVTH_PreSet')) {
     if (@($issues | Where-Object { $_.net -eq $net }).Count -ne 0) { throw "Unexpected reset issue on $net" }
 }
-if ($issues.Count -ne 4) { throw "Unexpected reset issue count: $($issues.Count)" }
+if ($issues.Count -ne 6) { throw "Unexpected reset issue count: $($issues.Count)" }
 
 $configured = Invoke-ResetCheck (Join-Path $PSScriptRoot 'reset.rules.test.json')
 $configuredIssues = @($configured.issues | Where-Object { $_.category -eq '复位信号上拉或下拉检查' })

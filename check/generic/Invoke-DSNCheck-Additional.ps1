@@ -119,15 +119,34 @@ function Find-Bias {
     }
     return $biasMatches.ToArray()
 }
+function Find-RailResistor {
+    param([string]$Net, [string]$RailKind)
+    $railMatches = New-Object System.Collections.Generic.List[object]
+    if (-not $Groups.ContainsKey($Net)) { return $railMatches.ToArray() }
+    foreach ($member in $Groups[$Net]) {
+        if (-not $Parts.ContainsKey([string]$member.owner_id)) { continue }
+        $part = $Parts[[string]$member.owner_id]
+        if ($part.reference -notmatch '^(?i:R[0-9A-Z_]*)$' -or -not $pinsByPart.ContainsKey($part.id)) { continue }
+        foreach ($other in $pinsByPart[$part.id]) {
+            if (-not (Test-ValidNet $other) -or [string]$other.net -eq $Net) { continue }
+            $isRail = if ($RailKind -eq 'ground') { Test-Ground ([string]$other.net) } else { Test-Supply ([string]$other.net) }
+            if ($isRail) {
+                $railMatches.Add([pscustomobject]@{ part=$part; rail=[string]$other.net; ohms=(Get-Number ([string]$part.value)) })
+            }
+        }
+    }
+    return $railMatches.ToArray()
+}
 function Get-OEInactiveDirection {
     param([string]$PinName)
     $name = $PinName.Trim()
     $activeLow = $false
     if ($name.StartsWith('/')) { $activeLow = $true; $name = $name.Substring(1) }
-    if ($name.EndsWith('#')) { $activeLow = $true; $name = $name.Substring(0, $name.Length - 1) }
+    if ($name.EndsWith('#') -or $name.EndsWith('/')) { $activeLow = $true; $name = $name.Substring(0, $name.Length - 1) }
     if ($name -match '(?i)_N$') { $activeLow = $true; $name = $name.Substring(0, $name.Length - 2) }
     if ($name.Contains('\')) { $activeLow = $true; $name = $name.Replace('\', '') }
-    if ($name -notmatch '^(?i:OE(?:\d+|_\d+)?|OUTPUT_ENABLE)$') { return '' }
+    if ($name -notmatch '(?i)OE|OUTPUT_ENABLE') { return '' }
+    if ($name -match '(?i)OE/[^/]+|[^/]+/OE') { return '' }
     return $(if ($activeLow) { 'up' } else { 'down' })
 }
 function Get-ResetInactiveDirection {
@@ -135,28 +154,48 @@ function Get-ResetInactiveDirection {
     $text = $Name.Trim()
     $activeLow = $false
     if ($text.StartsWith('/')) { $activeLow = $true; $text = $text.Substring(1) }
-    if ($text.EndsWith('#')) { $activeLow = $true; $text = $text.Substring(0, $text.Length - 1) }
+    if ($text.EndsWith('#') -or $text.EndsWith('/')) { $activeLow = $true; $text = $text.Substring(0, $text.Length - 1) }
     if ($text.Contains('\')) { $activeLow = $true; $text = $text.Replace('\', '') }
-    if ($text -match '^(?i:(?:RST|RESET)_?N|N(?:RST|RESET))$') { return 'up' }
-    if ($text -notmatch '^(?i:RST|RESET)$') { return '' }
+    if ($text -notmatch '(?i)RST|(?<!P)RESET') { return '' }
+    if ($text -match '(?i)(?:RST|RESET)_?N|N(?:RST|RESET)') { return 'up' }
     return $(if ($activeLow) { 'up' } else { 'down' })
 }
-function Test-ResetCandidate {
+function Test-ControlFunctionalPin {
     param([object]$Pin)
     if (-not $Parts.ContainsKey([string]$Pin.owner_id)) { return $false }
     $reference = [string]$Parts[[string]$Pin.owner_id].reference
-    if ($reference -match '^(?i:(?:R|C|L|FB|FERRITE)\d+[A-Z]?)$') { return $false }
+    if ($reference -match '^(?i:TX|TP)' -or $reference -match '^(?i:(?:XS|XP|J|P)\d)' -or $reference -match '^(?i:(?:R|C|L|FB|FERRITE)\d+[A-Z]?)$') { return $false }
+    return $true
+}
+function Test-ExplicitResetPolarity {
+    param([string]$Name)
+    $text = $Name.Trim()
+    return ($text.StartsWith('/') -or $text.EndsWith('/') -or $text.EndsWith('#') -or $text.Contains('\') -or $text -match '(?i)(?:RST|RESET)_?N|N(?:RST|RESET)')
+}
+function Test-ExplicitControlPolarity {
+    param([string]$Name)
+    $text = $Name.Trim()
+    return ($text.StartsWith('/') -or $text.EndsWith('/') -or $text.EndsWith('#') -or $text.Contains('\') -or
+        $text -match '(?i)(?:^|[_-])(?:N|L|H)(?:$|[_-])|(?:RST|RESET|OE|IRQ|INTR|INT)N(?:$|[_-])|N(?:RST|RESET|OE|IRQ|INTR|INT)')
+}
+function Test-ResetCandidate {
+    param([object]$Pin)
+    if (-not (Test-ControlFunctionalPin $Pin)) { return $false }
     return ([bool](Get-ResetInactiveDirection ([string]$Pin.name)) -or [bool](Get-ResetInactiveDirection ([string]$Pin.net)))
+}
+function Test-OECandidate {
+    param([object]$Pin)
+    return ((Test-ControlFunctionalPin $Pin) -and [bool](Get-OEInactiveDirection ([string]$Pin.name)))
 }
 function Get-InterruptInactiveDirection {
     param([string]$Name)
     $text = $Name.Trim()
     $activeLow = $false
     if ($text.StartsWith('/')) { $activeLow = $true; $text = $text.Substring(1) }
-    if ($text.EndsWith('#')) { $activeLow = $true; $text = $text.Substring(0, $text.Length - 1) }
+    if ($text.EndsWith('#') -or $text.EndsWith('/')) { $activeLow = $true; $text = $text.Substring(0, $text.Length - 1) }
     if ($text.Contains('\')) { $activeLow = $true; $text = $text.Replace('\', '') }
-    if ($text -notmatch '(?i)(?:^|[_/-])N?(?:IRQ|INTR|INT)(?:\d+|N)?(?=$|[_/-])' -and -not ($activeLow -and $text -match '(?i:INTR)$')) { return '' }
-    if ($text -match '(?i)(?:^|[_/-])N(?:IRQ|INTR|INT)' -or $text -match '(?i)(?:IRQ|INTR|INT)(?:\d+)?N$' -or $text -match '(?i)[_-]N$') { $activeLow = $true }
+    if ($text -notmatch '(?i)IRQ|INTR|(?:^|[_/\-\d])N?INT(?=$|[_/\-\dN])') { return '' }
+    if ($text -match '(?i)N(?:IRQ|INTR|INT)' -or $text -match '(?i)(?:IRQ|INTR|INT)(?:\d+)?N(?:$|[_/-])' -or $text -match '(?i)[_-]N$') { $activeLow = $true }
     return $(if ($activeLow) { 'up' } else { 'down' })
 }
 function Test-InterruptCandidate {
@@ -170,7 +209,8 @@ function Test-OCODPin {
     param([object]$Pin)
     if (-not $Parts.ContainsKey([string]$Pin.owner_id)) { return $false }
     $reference = [string]$Parts[[string]$Pin.owner_id].reference
-    if ($reference -match '^(?i:(?:Q|R|C|L|FB|D|J|P|TP)\d+[A-Z]?)$') { return $false }
+    if ($reference -match '^(?i:(?:Q|R|C|L|FB|J|P|TP)\d+[A-Z]?)$') { return $false }
+    if ($reference -match '^(?i:D\d+[A-Z]?)$' -and $pinsByPart[[string]$Pin.owner_id].Count -le 2) { return $false }
     $type = ([string]$Pin.pin_type).Trim()
     return ($type -eq '3' -or $type -match '^(?i:open[ _-]?(?:collector|drain))$')
 }
@@ -178,7 +218,8 @@ function Get-SignalPinRole {
     param([object]$Pin)
     if (-not $Parts.ContainsKey([string]$Pin.owner_id)) { return 'unknown' }
     $reference = [string]$Parts[[string]$Pin.owner_id].reference
-    if ($reference -match '^(?i:(?:R|C|L|FB|D|TP)\d+[A-Z]?)$') { return 'auxiliary' }
+    if ($reference -match '^(?i:(?:R|C|L|FB|TP)\d+[A-Z]?)$') { return 'auxiliary' }
+    if ($reference -match '^(?i:D\d+[A-Z]?)$' -and $pinsByPart[[string]$Pin.owner_id].Count -le 2) { return 'auxiliary' }
     if ($reference -match '^(?i:(?:J|P|Q)\d+[A-Z]?)$') { return 'unknown' }
     $type = ([string]$Pin.pin_type).Trim()
     if ($type -match '^(?i:0|input)$') { return 'receiver' }
@@ -213,7 +254,7 @@ function Find-OEDrivers {
             if ($otherPin.owner_id -eq $OEPin.owner_id -or -not (Test-ValidNet $otherPin) -or -not $Parts.ContainsKey([string]$otherPin.owner_id)) { continue }
             $part = $Parts[[string]$otherPin.owner_id]
             if ([string]$part.reference -notmatch $pattern -or [string]$otherPin.pin_type -eq '7') { continue }
-            if ([string]$otherPin.name -match '^(?i:(?:VDD|VCC|VSS|GND|AGND|DGND|AVDD).*)$') { continue }
+            if ([string]$otherPin.name -match '(?i)VDD|VCC|VSS|GND') { continue }
             $type = [string]$otherPin.pin_type
             $outputType = $type -match '^(?i:1|2|output|bidirectional|bidir|open.?collector|open.?drain)$'
             $driverMatches.Add([pscustomobject]@{ part=$part; pin=$otherPin; net=$candidate.net; via_series=$candidate.via_series; resistor=$candidate.resistor; output_type=$outputType })
@@ -280,17 +321,60 @@ $namingResult = & (Join-Path $PSScriptRoot 'Invoke-DSNCheck-Naming.ps1') -Output
 foreach ($issue in $namingResult.issues) { $issues.Add($issue) }
 $ruleCoverage.Add([pscustomobject]@{ category='网络命名检查'; rule='符号与差分/自动网络'; targets=($namingResult.symbols + $namingResult.aliases + $namingResult.differential_pairs) })
 
+foreach ($net in ($Groups.Keys | Sort-Object)) {
+    if ((Test-Supply ([string]$net)) -or (Test-Ground ([string]$net)) -or (Test-ExplicitControlPolarity ([string]$net))) { continue }
+    $markedPins = New-Object System.Collections.Generic.List[string]
+    $anchor = $null
+    foreach ($pin in $Groups[$net]) {
+        if (-not (Test-ValidNet $pin) -or -not (Test-ControlFunctionalPin $pin)) { continue }
+        $name = [string]$pin.name
+        if (-not (Test-ExplicitControlPolarity $name)) { continue }
+        $kind = ''
+        $bias = Get-ResetInactiveDirection $name
+        if ($bias) { $kind = 'RESET' }
+        else {
+            $bias = Get-OEInactiveDirection $name
+            if ($bias) { $kind = 'OE' }
+            else {
+                $bias = Get-InterruptInactiveDirection $name
+                if ($bias) { $kind = 'IRQ/INT' }
+            }
+        }
+        if (-not $kind) { continue }
+        if ($null -eq $anchor) { $anchor = $pin }
+        $reference = [string]$Parts[[string]$pin.owner_id].reference
+        $markedPins.Add("$reference.$name($kind; 默认方向=$bias)")
+    }
+    if ($markedPins.Count -eq 0) { continue }
+    Add-Issue '网络命名检查' 'manual_review' '控制网络名称缺少有效电平标记' $anchor ("网络=$net; 引脚=$(@($markedPins | Select-Object -Unique) -join ', '); 建议在网络名标注有效电平")
+}
+
 function Get-AttributeVoltage {
     param([string]$Text)
-    $match = [regex]::Match($Text.Trim(), '^(?<voltage>\d+(?:\.\d+)?)\s*V$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
-    if (-not $match.Success) { return $null }
-    $number = [double]::Parse($match.Groups['voltage'].Value, [Globalization.CultureInfo]::InvariantCulture)
-    if ($number -le 0) { return $null }
-    return $number
+    $values = @(Get-EmbeddedAttributeVoltages $Text | Select-Object -Unique)
+    if ($values.Count -ne 1) { return $null }
+    return [double]$values[0]
+}
+function Get-EmbeddedAttributeVoltages {
+    param([string]$Text)
+    $values = New-Object System.Collections.Generic.List[double]
+    $pattern = '(?i)(?<!\d)(?<whole>\d+)(?:\.(?<decimal>\d+))?\s*V(?<fraction>\d+)?'
+    foreach ($match in [regex]::Matches($Text, $pattern)) {
+        $number = 0.0
+        $numberText = $match.Groups['whole'].Value
+        if ($match.Groups['decimal'].Success) { $numberText += '.' + $match.Groups['decimal'].Value }
+        elseif ($match.Groups['fraction'].Success) { $numberText += '.' + $match.Groups['fraction'].Value }
+        if ([double]::TryParse($numberText, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$number) -and $number -gt 0) {
+            $values.Add($number)
+        }
+    }
+    return $values.ToArray()
 }
 function Get-PinPolarity {
     param([object]$Pin)
     $name = ([string]$Pin.name).Trim()
+    if ($name -match '(?i)POS|PLUS|ANODE') { return 'positive' }
+    if ($name -match '(?i)NEG|MINUS|CATHODE') { return 'negative' }
     if ($name -match '^(?i:P|POS|PLUS|\+|ANODE)$') { return 'positive' }
     if ($name -match '^(?i:N|NEG|MINUS|-|CATHODE)$') { return 'negative' }
     return ''
@@ -304,7 +388,7 @@ foreach ($entry in @($PowerNetEntries)) {
     if ([string](Get-Field $entry 'kind') -ne 'power') { continue }
     $text = [string](Get-Field $entry 'voltage_v')
     $voltage = 0.0
-    if ($text -and [double]::TryParse($text, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$voltage) -and $voltage -gt 0) { $netVoltages[$net] = $voltage }
+    if ($text -and [double]::TryParse($text, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$voltage) -and $voltage -ne 0) { $netVoltages[$net] = $voltage }
 }
 $capCount = 0
 foreach ($part in @($Parts.Values | Where-Object { $_.reference -match '^(?i:C[0-9A-Z_]*)$' })) {
@@ -312,12 +396,13 @@ foreach ($part in @($Parts.Values | Where-Object { $_.reference -match '^(?i:C[0
     $partProperties = if ($properties.ContainsKey($part.id)) { $properties[$part.id] } else { @{} }
     $tokens = New-Object System.Collections.Generic.List[string]
     foreach ($value in @([string]$part.value, [string]$part.source_part)) {
-        if ($value -match '^(?i:cap_polar|cap)(?:\.[A-Za-z0-9_]+)?$') { $tokens.Add($Matches[0].Split('.')[0].ToLowerInvariant()) }
+        if ($value -match '(?i)cap_polar') { $tokens.Add('cap_polar') }
+        elseif ($value -match '(?i)cap') { $tokens.Add('cap') }
     }
     foreach ($key in $partProperties.Keys) {
-        foreach ($value in @([string]$key, [string]$partProperties[$key])) {
-            if ($value.Trim() -match '^(?i:cap_polar|cap)$') { $tokens.Add($value.Trim().ToLowerInvariant()) }
-        }
+        $value = [string]$partProperties[$key]
+        if ($value -match '(?i)cap_polar') { $tokens.Add('cap_polar') }
+        elseif ($value -match '(?i)cap') { $tokens.Add('cap') }
     }
     $types = @($tokens | Select-Object -Unique)
     $capPins = if ($pinsByPart.ContainsKey($part.id)) { @($pinsByPart[$part.id].ToArray()) } else { @() }
@@ -333,6 +418,12 @@ foreach ($part in @($Parts.Values | Where-Object { $_.reference -match '^(?i:C[0
         $rating = Get-AttributeVoltage ([string]$partProperties[$key])
         if ($null -ne $rating) { $ratedCandidates.Add([pscustomobject]@{ value=$rating; source=$key }) }
     }
+    foreach ($key in $partProperties.Keys) {
+        if ($key -notmatch '(?i)^(?:Description|Desc|Part Description|PartDescription)$') { continue }
+        foreach ($rating in @(Get-EmbeddedAttributeVoltages ([string]$partProperties[$key]))) {
+            $ratedCandidates.Add([pscustomobject]@{ value=[double]$rating; source=$key })
+        }
+    }
     if ($ratedCandidates.Count -eq 0) {
         foreach ($key in $partProperties.Keys) {
             if ($key -in $dedicatedKeys -or $key -match '(?i:operat|working|applied|external|supply|voltage_v)') { continue }
@@ -341,6 +432,7 @@ foreach ($part in @($Parts.Values | Where-Object { $_.reference -match '^(?i:C[0
         }
     }
     $ratings = @($ratedCandidates | ForEach-Object { $_.value } | Select-Object -Unique)
+    $ratingSources = @($ratedCandidates | ForEach-Object { $_.source } | Select-Object -Unique) -join ', '
     $voltageReasons = New-Object System.Collections.Generic.List[string]
     if ($ratings.Count -ne 1) { $voltageReasons.Add('本体耐压属性缺失、不可解析或数值冲突') }
     $externalKnown = $false
@@ -361,7 +453,17 @@ foreach ($part in @($Parts.Values | Where-Object { $_.reference -match '^(?i:C[0
         }
     }
     if ($voltageReasons.Count -gt 0) {
-        Add-Issue '电容耐压降额检查' 'manual_review' '无法识别本体耐压、外部电压的电容' $anchor ("器件=$($part.reference); $($voltageReasons -join '; ')")
+        $ratingText = if ($ratings.Count -eq 1) { "; 本体耐压=$($ratings[0])V" } else { '' }
+        $sourceText = if ($ratingSources) { "; 本体耐压来源=$ratingSources" } else { '' }
+        $voltageRule = '无法识别本体耐压、外部电压的电容'
+        if ($ratings.Count -eq 1 -and $voltageReasons -contains '至少一个端点网络缺少已确认的电位值') {
+            $voltageRule = '外部电压无法确认'
+        } elseif ($ratings.Count -eq 1 -and $voltageReasons -contains '未找到两个有效连接的电容引脚') {
+            $voltageRule = '电容端点连接无法确认'
+        } elseif ($ratings.Count -ne 1 -and $externalKnown) {
+            $voltageRule = '本体耐压无法确认'
+        }
+        Add-Issue '电容耐压降额检查' 'manual_review' $voltageRule $anchor ("器件=$($part.reference); $($voltageReasons -join '; ')$ratingText$sourceText")
         continue
     }
     $rated = [double]$ratings[0]
@@ -398,6 +500,7 @@ foreach ($rule in $slowRules) {
 }
 
 $biasRules = @(Get-RuleList 'bias_rules')
+$biasRules += [pscustomobject]@{ name='自动识别OE引脚'; category='OE上拉检查'; automatic_oe=$true }
 $biasRules += [pscustomobject]@{ name='自动识别复位网络'; category='复位信号上拉或下拉检查'; automatic_reset=$true }
 $biasRules += [pscustomobject]@{ name='自动识别中断网络'; category='中断信号上拉或下拉检查'; automatic_interrupt=$true }
 if (@($biasRules | Where-Object { [string](Get-Field $_ 'category') -eq 'OC/OD门上拉检查' }).Count -eq 0) {
@@ -406,6 +509,8 @@ if (@($biasRules | Where-Object { [string](Get-Field $_ 'category') -eq 'OC/OD�
 $biasCategories = @('OE上拉检查','复位信号上拉或下拉检查','中断信号上拉或下拉检查','OC/OD门上拉检查','网络上拉或下拉检查')
 $checkedResetNets = @{}
 $checkedInterruptNets = @{}
+$checkedOENets = @{}
+$configuredOENets = @{}
 foreach ($rule in $biasRules) {
     $category = [string](Get-Field $rule 'category')
     if ($category -notin $biasCategories) { throw "Unsupported bias category: $category" }
@@ -414,9 +519,14 @@ foreach ($rule in $biasRules) {
     if ($category -eq 'OC/OD门上拉检查' -and $direction -ne 'up') { throw 'OC/OD bias direction must be up' }
     if ($category -notin @('OE上拉检查','复位信号上拉或下拉检查','中断信号上拉或下拉检查') -and -not $direction) { throw "Invalid bias direction for $category" }
     $automaticReset = [bool](Get-Field $rule 'automatic_reset' $false)
+    $automaticOE = [bool](Get-Field $rule 'automatic_oe' $false)
     $automaticInterrupt = [bool](Get-Field $rule 'automatic_interrupt' $false)
     $automaticOCOD = [bool](Get-Field $rule 'automatic_ocod' $false)
-    if ($automaticReset) {
+    if ($automaticOE) {
+        if ($coverage[$category] -eq 'not_configured') { $coverage[$category] = 'automatic' }
+        $targets = @($AllPins | Where-Object { (Test-OECandidate $_) -and -not $configuredOENets.ContainsKey([string]$_.net) })
+        $ruleCoverage.Add([pscustomobject]@{ category=$category; rule='自动识别OE引脚'; targets=$targets.Count })
+    } elseif ($automaticReset) {
         if ($coverage[$category] -eq 'not_configured') { $coverage[$category] = 'automatic' }
         $targets = @($AllPins | Where-Object { Test-ResetCandidate $_ })
         $ruleCoverage.Add([pscustomobject]@{ category=$category; rule='自动识别复位网络'; targets=$targets.Count })
@@ -431,10 +541,17 @@ foreach ($rule in $biasRules) {
     } else {
         $coverage[$category] = 'configured'
         $targets = @(Select-RulePins $rule)
+        if ($category -eq 'OE上拉检查') {
+            foreach ($target in $targets) { $configuredOENets[[string]$target.net] = $true }
+        }
         if ($category -eq 'OC/OD门上拉检查') { $targets = @($targets | Where-Object { Test-OCODPin $_ }) }
         Add-RuleCoverage $category $rule $targets.Count
     }
     foreach ($pin in $targets) {
+        if ($automaticOE -and $pin.net -and $pin.net -ne 'NULL') {
+            if ($checkedOENets.ContainsKey([string]$pin.net)) { continue }
+            $checkedOENets[[string]$pin.net] = $true
+        }
         if ($category -eq '复位信号上拉或下拉检查') {
             $resetKey = if ($pin.net -and $pin.net -ne 'NULL') { [string]$pin.net } else { [string]$pin.owner_id + '/' + [string]$pin.number }
             if ($checkedResetNets.ContainsKey($resetKey)) { continue }
@@ -452,7 +569,7 @@ foreach ($rule in $biasRules) {
         $interruptModeUnconfirmed = $false
         $railPattern = [string](Get-Field $rule 'rail_pattern')
         if ($category -eq '复位信号上拉或下拉检查') {
-            $namedPins = @($AllPins | Where-Object { $_.net -eq $pin.net -and (Get-ResetInactiveDirection ([string]$_.name)) })
+            $namedPins = @($AllPins | Where-Object { $_.net -eq $pin.net -and (Test-ControlFunctionalPin $_) -and (Get-ResetInactiveDirection ([string]$_.name)) })
             $polarities = @($namedPins | ForEach-Object { Get-ResetInactiveDirection ([string]$_.name) } | Select-Object -Unique)
             if ($polarities.Count -gt 1) {
                 Add-Issue $category 'manual_review' '同一复位网络的有效电平标记冲突' $pin ("网络=$($pin.net); 引脚=$(@($namedPins | ForEach-Object { $_.name } | Select-Object -Unique) -join ', ')")
@@ -461,7 +578,7 @@ foreach ($rule in $biasRules) {
             $inferredDirection = if ($polarities.Count -eq 1) { [string]$polarities[0] } else { Get-ResetInactiveDirection ([string]$pin.net) }
             if (-not $inferredDirection) { Add-Issue $category 'manual_review' '无法从复位名称判断有效电平' $pin ("引脚=$($pin.name); 网络=$($pin.net)"); continue }
             $netDirection = Get-ResetInactiveDirection ([string]$pin.net)
-            if ($netDirection -and $netDirection -ne $inferredDirection) {
+            if ($netDirection -and (Test-ExplicitResetPolarity ([string]$pin.net)) -and $netDirection -ne $inferredDirection) {
                 Add-Issue $category 'manual_review' '复位引脚与网络名的有效电平标记不一致' $pin ("引脚方向=$inferredDirection; 网络名方向=$netDirection; 本次按引脚名检查")
             }
             if ($direction -and $direction -ne $inferredDirection) {
@@ -498,10 +615,23 @@ foreach ($rule in $biasRules) {
             if (-not $inferredDirection) { Add-Issue $category 'manual_review' '无法从OE引脚名判断有效电平' $pin '仅识别 /OE、Cadence反斜杠上划线、OE_N、OE# 或普通OE；复用功能名需人工确认。'; continue }
             if ($direction -and $direction -ne $inferredDirection) { Add-Issue $category 'manual_review' '规则偏置方向与OE命名不一致' $pin ("配置=$direction; 按引脚名应为=$inferredDirection; 本次按引脚名检查") }
             $requiredDirection = $inferredDirection
-            $drivers = @(Find-OEDrivers $pin $rule)
-            if ($drivers.Count -eq 0) { Add-Issue $category 'manual_review' '未识别到其他芯片驱动OE' $pin '仅处理其他芯片直连或经单个限值内串阻驱动的OE；需确认器件位号模式和引脚连接。'; continue }
-            $driverConfirmed = @($drivers | Where-Object { $_.output_type }).Count -gt 0
-            if (-not $driverConfirmed) { Add-Issue $category 'manual_review' '外部芯片引脚驱动方向未确认' $pin ("连接引脚=$(@($drivers | ForEach-Object { $_.part.reference + '.' + $_.pin.name }) -join ', '); 需核对器件库引脚类型") }
+            if ((Test-Supply ([string]$pin.net)) -or (Test-Ground ([string]$pin.net))) {
+                $railKind = if (Test-Ground ([string]$pin.net)) { '地' } else { '电源' }
+                Add-Issue $category 'error' 'OE直接连接电源/地，未通过偏置电阻' $pin ("网络=$($pin.net); 需要=$requiredDirection; OE不能直接连接$railKind，应通过电阻连接到相应电源/地")
+                continue
+            }
+            $staticRailKind = if ($requiredDirection -eq 'up') { 'ground' } else { 'power' }
+            $staticRail = @(Find-RailResistor ([string]$pin.net) $staticRailKind)
+            if ($staticRail.Count -gt 0) {
+                Add-Issue $category 'manual_review' 'OE通过电阻永久拉到有效电平' $pin ("电阻=$(@($staticRail | ForEach-Object { $_.part.reference }) -join ', '); 连接=$($staticRailKind); 需确认该OE允许永久保持有效，以及电阻值满足限流要求")
+                continue
+            }
+            if (-not $automaticOE) {
+                $drivers = @(Find-OEDrivers $pin $rule)
+                if ($drivers.Count -eq 0) { Add-Issue $category 'manual_review' '未识别到其他芯片驱动OE' $pin '仅处理其他芯片直连或经单个限值内串阻驱动的OE；需确认器件位号模式和引脚连接。'; continue }
+                $driverConfirmed = @($drivers | Where-Object { $_.output_type }).Count -gt 0
+                if (-not $driverConfirmed) { Add-Issue $category 'manual_review' '外部芯片引脚驱动方向未确认' $pin ("连接引脚=$(@($drivers | ForEach-Object { $_.part.reference + '.' + $_.pin.name }) -join ', '); 需核对器件库引脚类型") }
+            }
             if ($requiredDirection -eq 'down') { $railPattern = '' }
         }
         $biasMatches = @(Find-Bias $pin.net $requiredDirection $railPattern)
@@ -539,7 +669,7 @@ foreach ($rule in $biasRules) {
                     Add-Issue $category 'manual_review' '串阻驱动侧存在相反偏置' $pin ("OE网络=$($pin.net); 驱动侧网络=$driverNet; 需计算上电分压及驱动状态")
                 }
             }
-            Add-Issue $category 'manual_review' '外部驱动上电状态未确认' $pin '原理图连接无法证明驱动引脚在上电期间高阻或保持无效；需查驱动芯片复位默认态和上电顺序。'
+            if (-not $automaticOE) { Add-Issue $category 'manual_review' '外部驱动上电状态未确认' $pin '原理图连接无法证明驱动引脚在上电期间高阻或保持无效；需查驱动芯片复位默认态和上电顺序。' }
         }
     }
 }
