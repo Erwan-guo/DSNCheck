@@ -70,13 +70,7 @@ source {D:/GPTPRJ/DSNCheck/export/cadence/capture_export_active.tcl}
   -InputDirectory 'D:\GPTPRJ\EXAMPLE_SCH\AT91SAM9M10-G45-EK_REVA2-TOOL-TEST_checkdata'
 ```
 
-滤波电容规则按器件逐个检查，要求电容与器件位于同一 page，并且电容一端接该器件供电网络、另一端接地；默认以 Power 引脚为中心搜索 250 个图纸坐标单位。可按原理图库调整：
-
-```powershell
-& 'D:\GPTPRJ\DSNCheck\check\generic\Run-DSNCheck.ps1' `
-  -InputDirectory 'D:\GPTPRJ\EXAMPLE_SCH\AT91SAM9M10-G45-EK_REVA2-TOOL-TEST_checkdata' `
-  -FilterCapDistance 300
-```
+滤波电容规则按器件逐个检查：器件所在 page 只要有一个已连接电容，一端接该器件的完整供电网络名、另一端接已确认的地网络，就满足检查。相同名称的独立电源符号通过导出的网络名关联；不要求电容与器件引脚在图纸上直接相连，也不限制图纸距离。不同 page 上的电容不计入。
 
 自动候选的电压命名依据仍为 `数字V数字`（如 `3V75`）或 `数字.数字V`（如 `3.75VREF`），允许前后缀；但最终电源/地身份只取自用户确认清单。孤立电源采用独立检查遍历，已确认的电源网络不会重复计入单节点网络。若重新导出改变了 `dbo/objects.jsonl`，旧确认清单会因 SHA-256 不匹配而被拒绝，需重新审核。
 
@@ -315,7 +309,7 @@ Capture 还提供以下标准菜单输出，但这些命令依赖版本、Captur
 | 电源与地网络 | 已审核 `power_nets.confirmed.json` | 候选来自命名、Global、Pin 与两端器件连通关系 |
 | 电源命名识别 | Dbo 网络名 | `数字V数字` 或 `数字.数字V` 是自动候选规则，不是最终判定 |
 | Power 引脚外部供电 | Dbo `pin` + 已确认电源网络 | `pin.pin_type=7`、`pin.net_name`、确认映射 |
-| 供电器件就近滤波 | Dbo `part`、`pin` | 同页电容、电源/地两端网络、引脚坐标 |
+| 供电器件就近滤波 | Dbo `part`、`pin` | 同页电容、完整供电网络名及接地网络；不检查图纸距离 |
 | 悬空导线 | Bundled Hanging Wires DRC | `wire.start_object_count/end_object_count` |
 | Junction 正确性 | 无完整通用导出 | `wire_point.is_junction`、导线坐标和网络名 |
 | Off-page 放置与匹配 | 网表只含部分逻辑关系 | `offpage_connector` 的页面、网络、热点和边界框 |

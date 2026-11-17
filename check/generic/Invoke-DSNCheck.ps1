@@ -2,7 +2,6 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$OutputDirectory,
-    [double]$FilterCapDistance = 250,
     [string]$RulesFile,
     [string]$PowerMap
 )
@@ -117,12 +116,11 @@ foreach ($powerPin in $powerPins) {
     }
 }
 
-# 3. Check every device independently. A capacitor must be on the same page,
-# connect between this exact power net and a ground net, and be within the
-# configured drawing-coordinate radius of at least one Power pin.
+# 3. Check every device independently. A capacitor on the same page must
+# connect the exact supply net to a ground net; its drawing position is irrelevant.
 $capacitors = @($parts.Values | Where-Object { [string]$_.reference -match '^(?i:C[0-9A-Z_]*)$' })
 $capPinMap = @{}
-foreach ($cap in $capacitors) { $capPinMap[$cap.id] = @($allPins | Where-Object { $_.owner_id -eq $cap.id -and -not $_.no_connect }) }
+foreach ($cap in $capacitors) { $capPinMap[$cap.id] = @($allPins | Where-Object { $_.owner_id -eq $cap.id -and $_.connected -and -not $_.no_connect }) }
 $devicePowerGroups = @{}
 foreach ($powerPin in $powerPins) {
     if (-not $powerPin.net -or $powerPin.net -eq 'NULL' -or -not $parts.ContainsKey($powerPin.owner_id)) { continue }
@@ -142,16 +140,12 @@ foreach ($entry in $devicePowerGroups.GetEnumerator()) {
         $capPinsForPart = @($capPinMap[$cap.id]); if ($capPinsForPart.Count -lt 2) { continue }
         if (@($capPinsForPart | Where-Object { [string]$_.net -eq $net }).Count -eq 0) { continue }
         if (@($capPinsForPart | Where-Object { Test-GroundNet ([string]$_.net) }).Count -eq 0) { continue }
-        $cx = ($cap.left + $cap.right) / 2.0; $cy = ($cap.top + $cap.bottom) / 2.0
-        foreach ($item in $items) {
-            $dx = $item.pin.x - $cx; $dy = $item.pin.y - $cy
-            if ([math]::Sqrt(($dx * $dx) + ($dy * $dy)) -le $FilterCapDistance) { $found = $true; break }
-        }
-        if ($found) { break }
+        $found = $true
+        break
     }
     if (-not $found) {
         $pinsText = ($items | ForEach-Object { '{0}({1})' -f $_.pin.name, $_.pin.number }) -join ', '
-        $errors.Add([pscustomobject]@{ category='供电器件缺少就近滤波电容'; rule='器件供电网络附近未发现同页、接地的滤波电容'; page=$part.page_id; part=$part.reference; net=$net; details=('器件={0}; Power引脚={1}; page={2}; 搜索半径={3}' -f $part.reference, $pinsText, $part.page_id, $FilterCapDistance) })
+        $errors.Add([pscustomobject]@{ category='供电器件缺少就近滤波电容'; rule='器件所在页未发现连接同名供电网络和地的滤波电容'; page=$part.page_id; part=$part.reference; net=$net; details=('器件={0}; Power引脚={1}; page={2}; 供电网络={3}; 同页未找到接地滤波电容' -f $part.reference, $pinsText, $part.page_id, $net) })
     }
 }
 # Isolated-power check is intentionally a separate pass from single-node
@@ -188,7 +182,7 @@ foreach ($issue in $additional.issues) { $errors.Add($issue) }
 $categoryOrder = @('单节点网络', '孤立电源', '伪单节点网络', 'Power引脚未外接电源', '供电器件缺少就近滤波电容') + @($additional.categories)
 $summary = [ordered]@{}
 foreach ($category in $categoryOrder) { $summary[$category] = @($errors | Where-Object category -eq $category).Count }
-$report = [ordered]@{ schema_version='1.4'; generated_at=(Get-Date).ToString('s'); filter_cap_distance=$FilterCapDistance; power_map=$powerMapPath; power_map_review_status=$powerMapReviewStatus; confirmed_power_nets=$powerNets.Count; confirmed_ground_nets=$groundNets.Count; rule_coverage=$additional.coverage; configured_rule_targets=$additional.rule_coverage; summary=$summary; errors=@($errors.ToArray()) }
+$report = [ordered]@{ schema_version='1.4'; generated_at=(Get-Date).ToString('s'); power_map=$powerMapPath; power_map_review_status=$powerMapReviewStatus; confirmed_power_nets=$powerNets.Count; confirmed_ground_nets=$groundNets.Count; rule_coverage=$additional.coverage; configured_rule_targets=$additional.rule_coverage; summary=$summary; errors=@($errors.ToArray()) }
 $jsonPath = Join-Path $outputPath 'dsn_check_report.json'
 $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
 
